@@ -1,24 +1,36 @@
-# Tau-5* ASTEROIDS-style ensemble selection
+# Tau-5* ASTEROIDS-style selection
 
-Independent implementation in development for androgen-receptor Tau-5* WT and W397A/W433A (AA). This is not the original authors' ASTEROIDS source code. No completed equal-weight fits are reported yet.
+This is an independent reimplementation of fixed-size equal-weight ensemble selection, not the original ASTEROIDS source code. The historical continuously weighted fits remain in [tau5-sec-saxs-analysis](https://github.com/paulrobustelli/tau5-sec-saxs-analysis).
 
-## Planned selection
+## Current status
 
-- Select approximately 500 distinct conformers per ensemble, with exactly equal weight 1/N for each selected member.
-- Use fixed-size genetic-algorithm subset selection, including mutation and crossover; do not optimize individual continuous weights.
-- Fit all available interior backbone chemical shifts for each construct and SAXS jointly. Minimize shift residuals as closely as the candidate pool permits, with predictor error providing context rather than a tolerance that stops fitting. Report per-nucleus RMSDs and SAXS residuals separately.
-- Compare independent candidate pools and repeated selection seeds. A small residual alone does not establish ensemble convergence.
+The selector and output pipeline are implemented and tested. Full WT/AA selections are waiting for candidate generation and forward calculations; no final fit or convergence claim is made yet.
 
-## Inputs and modeling conventions
+## Method
 
-The construct is GP + AR330–447 (120 residues). Model residues 1–2 are GP; model residue = AR residue − 327. AA contains W397A and W433A, with the remaining sequence unchanged.
+The representation follows [Huang et al., JACS 2014, DOI 10.1021/ja502030n](https://doi.org/10.1021/ja502030n): each gene is one conformer, ensemble size stays fixed, all selected conformers have population 1/N, and selection uses mutation and crossover. Here N=500 is the requested size, not a size established by held-out cross-validation.
 
-Candidate generation targets 2,000 base conformers per independent replicate using IDPConformerGenerator, plus separately tracked helix-length supplements. Supplement windows span 4, 6, 8, 10, and 12 residues at D2D helicity ≥10% sites. These enriched pool frequencies are not physical populations.
+Our explicit implementation choices are 100 chromosomes, 1,000 generations, and three random seeds per independent candidate pool. Each generation proposes internal mutations from the current population, external mutations from the entire candidate pool, crossover from pairs of parents, and fresh random ensembles. Random four-way tournaments retain offspring; elitism preserves the best solution. All chromosomes contain 500 distinct candidate IDs. Mutation sizes mix 1, 2, 5, and N/20 replacements. These hyperparameters and details are our choices, not a claim to reproduce unavailable authors' code exactly. Runs stop at the generation budget, not a predictor-error tolerance. Further search is required if objective traces or independent runs remain unstable.
 
-SPARTA+ supplies chemical-shift predictions and sequence-specific random-coil references; CRYSOL supplies SAXS predictions. Exclude terminal database-average shifts and unmeasured GP shifts. Use all other measured nuclei separately for each protein. Subtract the same SPARTA+ random-coil reference from experimental and calculated shifts when displaying secondary shifts. Compare helicity using DSSP H and H/G/I assignments with D2D.
+The objective is the sum of squared scaled chemical-shift residuals plus the sum of squared SAXS residuals normalized by experimental errors. Carbon scales are 0.5 ppm, N 2.45 ppm, HN 0.49 ppm, and HA 0.25 ppm where measured. These specify the optimization tradeoff; 0.5 ppm is not a claimed predictor accuracy or an acceptance cutoff. Per-nucleus RMSDs and SAXS mean chi-square are reported separately. Fit a single nonnegative SAXS intensity scale per ensemble, with no additive background or chemical-shift offset. There is no entropy penalty and no optimization of individual conformer weights.
 
-Licensed predictor executables are not distributed here. Algorithm settings, objective normalization, and reproducible runs will be documented alongside the implementation before results are reported.
+## Inputs
 
-## Comparison baseline
+GP + AR330–447 (120 residues), WT and W397A/W433A. Model residue = AR residue − 327. Every PDB sequence is checked against its construct. Retain every measured interior shift independently for each construct; missing forward predictions cause an explicit failure. Exclude GP and terminal P447 shifts. Subtract the same SPARTA+ random-coil baseline from experiment and calculation for secondary-shift displays. Report DSSP H and H/G/I helicity, without Ramachandran-basin panels.
 
-The existing continuous-weight analysis remains in [tau5-sec-saxs-analysis](https://github.com/paulrobustelli/tau5-sec-saxs-analysis), including the [executed comparison notebook](https://github.com/paulrobustelli/tau5-sec-saxs-analysis/blob/main/Chemical_shift_SAXS/Tau5_current_results.ipynb). Its weighted fits are historical comparisons, not ASTEROIDS equal-weight selections.
+Independent candidate groups combine pool_1 + pool_3 or pool_2 + pool_4, each containing 2,000 base structures, with matching helix-length supplements (110 WT or 90 AA per group). Supplements cover lengths 4/6/8/10/12 around sites with D2D helicity ≥10%. IDPConformerGenerator supplies candidates; SPARTA+ and CRYSOL supply predictions. Enrichment frequencies are not physical populations.
+
+## Running
+
+From the original workspace root with the existing prediction cache:
+
+```sh
+OPENBLAS_NUM_THREADS=1 work/ensemble_env/bin/python work/asteroids/test_selection.py
+OPENBLAS_NUM_THREADS=1 work/ensemble_env/bin/python work/asteroids/run_selection.py WT 1
+```
+
+`selection.py` needs NumPy. `run_selection.py` expects experimental inputs under `outputs/ASTEROIDS_setup/` and per-conformer result.json caches under `outputs/Tau5_joint_refinement/{WT,AA}/backcalc/`. Those large caches and licensed predictor programs are not bundled here yet. `wait_and_select.py` waits for exact completed candidate counts before dispatching all four independent groups.
+
+Outputs go to `outputs/Tau5_ASTEROIDS/`: candidate provenance, input fingerprint, equal-weight selected membership, shift and SAXS residual tables, DSSP populations, search traces, and summaries. Best-so-far checkpoints are written every 25 generations. Completed matching runs are skipped; an interrupted seed restarts deterministically from generation zero. A checkpoint is not full optimizer-state continuation.
+
+Validation includes a synthetic target whose optimum is exhaustively enumerated, unique subset cardinality, elitism, the full-pool edge case, and a 500-member end-to-end output smoke test. Real-data fit quality and convergence remain to be assessed.
